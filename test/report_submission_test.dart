@@ -3,19 +3,28 @@ import 'dart:async';
 import 'package:aquatrace/core/constants/fault_constants.dart';
 import 'package:aquatrace/core/errors/app_exception.dart';
 import 'package:aquatrace/core/models/report_model.dart';
+import 'package:aquatrace/core/services/auth_service.dart';
 import 'package:aquatrace/core/services/data_repository.dart';
+import 'package:aquatrace/core/services/preferences_service.dart';
 import 'package:aquatrace/core/services/report_submission_gateway.dart';
+import 'package:aquatrace/core/models/mock_data.dart';
 import 'package:aquatrace/features/reports/presentation/citizen_report_form_screen.dart';
+import 'package:aquatrace/features/auth/providers/auth_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aquatrace/features/reports/services/citizen_report_input_provider.dart';
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
   group('Citizen report persistence', () {
     test('uploads evidence before saving the pending report', () async {
       final gateway = FakeReportSubmissionGateway();
@@ -245,6 +254,97 @@ void main() {
     );
     expect(find.text('Choose photo'), findsOneWidget);
   });
+
+  testWidgets('valid form submits report and returns success', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'pref_last_auth_uid': MockData.citizenUser.uid,
+    });
+    final input = FakeCitizenReportInputProvider()
+      ..position = buildPosition()
+      ..photo = XFile.fromData(
+        Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xD9]),
+        name: 'fault.jpg',
+        path: 'fault.jpg',
+        mimeType: 'image/jpeg',
+      );
+    final gateway = FakeReportSubmissionGateway();
+    final repository = DataRepository(reportSubmissionGateway: gateway);
+    final preferences = PreferencesService(
+      await SharedPreferences.getInstance(),
+    );
+    final authService = AuthService(preferences);
+    await tester.pump();
+    final authProvider = AuthProvider(authService);
+    final navigator = ReportFormTestNavigator(input: input);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: repository),
+          ChangeNotifierProvider.value(value: authProvider),
+        ],
+        child: MaterialApp(home: navigator),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Open report form'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<FaultType>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pipe Leak').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextField).at(0),
+      'Water is leaking from a pipe beside the road.',
+    );
+    await tester.enterText(
+      find.byType(TextField).at(1),
+      'Test Street, Colombo 03',
+    );
+    tester.binding.focusManager.primaryFocus?.unfocus();
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'High'));
+    await tester.tap(find.widgetWithText(ChoiceChip, 'High'));
+    await tester.pumpAndSettle();
+
+    await tapFormAction(tester, 'Get current location');
+    expect(find.text('Review your GPS location'), findsOneWidget);
+    await tapFormAction(tester, 'Confirm this location');
+    expect(find.text('Location confirmed'), findsOneWidget);
+    await tapFormAction(tester, 'Choose photo');
+    expect(find.text('fault.jpg'), findsOneWidget);
+    expect(find.text('Pipe Leak'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'High'), findsOneWidget);
+    await tapFormAction(tester, 'Submit Report');
+
+    expect(gateway.calls, ['upload', 'create']);
+    expect(
+      tester
+          .state<_ReportFormTestNavigatorState>(
+            find.byType(ReportFormTestNavigator, skipOffstage: false),
+          )
+          .submissionResult,
+      isTrue,
+    );
+    final savedReport = gateway.createdReport!;
+    expect(savedReport.reporterUid, authService.currentUser!.uid);
+    expect(savedReport.reporterUid, MockData.citizenUser.uid);
+    expect(savedReport.faultType, FaultType.pipeLeak);
+    expect(
+      savedReport.description,
+      'Water is leaking from a pipe beside the road.',
+    );
+    expect(savedReport.severity, FaultSeverity.high);
+    expect(savedReport.latitude, 6.912345);
+    expect(savedReport.longitude, 79.812345);
+    expect(savedReport.address, 'Test Street, Colombo 03');
+    expect(savedReport.beforeImageUrl, 'https://storage.example/evidence.jpg');
+    expect(savedReport.status, FaultStatus.pending);
+    expect(savedReport.createdAt.isUtc, isTrue);
+    expect(repository.getReportById(savedReport.reportId), isNotNull);
+    expect(find.text('Report Water Fault'), findsNothing);
+  });
 }
 
 Future<void> pumpReportForm(
@@ -322,17 +422,68 @@ class FakeCitizenReportInputProvider implements CitizenReportInputProvider {
   @override
   bool locationPermissionPermanentlyDenied = false;
   final List<ImageSource> selectedSources = [];
+  Position? position;
+  XFile? photo;
 
   @override
   Future<Position> getCurrentPosition() async {
     if (locationError case final error?) throw error;
-    throw StateError('No test position configured.');
+    return position ?? (throw StateError('No test position configured.'));
   }
 
   @override
   Future<XFile?> pickPhoto(ImageSource source) async {
     selectedSources.add(source);
     if (photoError case final error?) throw error;
-    return null;
+    return photo;
+  }
+}
+
+Position buildPosition() {
+  return Position(
+    latitude: 6.912345,
+    longitude: 79.812345,
+    timestamp: DateTime.utc(2026, 11, 9),
+    accuracy: 8,
+    altitude: 0,
+    altitudeAccuracy: 0,
+    heading: 0,
+    headingAccuracy: 0,
+    speed: 0,
+    speedAccuracy: 0,
+  );
+}
+
+class ReportFormTestNavigator extends StatefulWidget {
+  final FakeCitizenReportInputProvider input;
+
+  const ReportFormTestNavigator({super.key, required this.input});
+
+  @override
+  State<ReportFormTestNavigator> createState() =>
+      _ReportFormTestNavigatorState();
+}
+
+class _ReportFormTestNavigatorState extends State<ReportFormTestNavigator> {
+  bool? submissionResult;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: TextButton(
+          onPressed: () async {
+            submissionResult = await Navigator.of(context).push<bool>(
+              MaterialPageRoute(
+                builder: (_) =>
+                    CitizenReportFormScreen(inputProvider: widget.input),
+              ),
+            );
+            setState(() {});
+          },
+          child: const Text('Open report form'),
+        ),
+      ),
+    );
   }
 }

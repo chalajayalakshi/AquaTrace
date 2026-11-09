@@ -1,5 +1,27 @@
 # AquaTrace — Update Log
 
+## 2026-11-09 14:50:52 +05:30 (Asia/Colombo, UTC+05:30) — Member 3 success-path QA
+
+### Completed
+- Added a widget-level happy-path test for the full citizen report form using injected GPS/photo inputs, a restored demo-citizen identity, and a fake persistence gateway.
+- Verified fault type, description, severity, address, confirmed numeric coordinates, evidence URL, authenticated reporter UID, UTC creation time, `pending` status, upload-before-create order, repository visibility, and successful return from the form.
+- Updated the test harness to avoid a fake-clock deadlock from the demo sign-in delay and to model the IO `XFile` filename via its path.
+
+### Checks
+| Command | Result |
+|---------|--------|
+| `dart format test/report_submission_test.dart` | Pass. |
+| `flutter test` | Pass — 23/23 after formatting. |
+| `flutter analyze` | No reporting-code issues; existing warning: configured asset directory `assets/icons/` is missing. |
+| `flutter build web` | Pass — `build/web` generated; existing missing `assets/icons/` warning and non-blocking wasm dry-run notice. |
+| `get_errors` on `test/report_submission_test.dart` | No errors. |
+
+### Remaining / blockers
+- Live Storage upload / Firestore persistence still needs an enabled Firebase Storage bucket and a real authenticated citizen account; demo identities are intentionally blocked from cloud submissions.
+- Real camera/location permission prompts need a mobile device or emulator.
+- The requested `test` branch exists on `upstream/test` at `883bf5e` and already contains the earlier reporting commit `f1472f6`; there is no `origin/test` branch. Merge the remaining test/log commit into a local `test` branch based on `upstream/test`.
+
+
 ## 2026-11-09 12:48:59 +05:30 (Asia/Colombo, UTC+05:30) — Member 3 citizen fault reporting
 
 ### Completed
